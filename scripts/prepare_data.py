@@ -53,6 +53,11 @@ def pull_ticker(ticker: str, start: date, end: date) -> pd.DataFrame | None:
             print(f"  [WARN] {ticker}: no data returned — skipping")
             return None
 
+        # yfinance >= 0.2 returns a MultiIndex even for single tickers;
+        # flatten to simple string column names before selecting.
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+
         df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
         df.index.name = "Date"
         df.reset_index(inplace=True)
