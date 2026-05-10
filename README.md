@@ -33,13 +33,16 @@ data/batch_2/    ─────►   /Volumes/asset_mgmt/bronze/uploads/
                   ▼                                       ▼
      gold.dashboard_latest_prices             gold.ticker_performance
      (one row per ticker, latest)          (one row per ticker per date)
+                                      │
+                           Databricks Genie Space
+                           natural-language querying
 ```
 
 ---
 
 ## Ticker Universe
 
-26 tickers across 5 sectors + benchmark:
+26 tickers across 5 sectors + SPY benchmark (all classified under the "Benchmark" sector):
 
 | Sector | Tickers |
 |---|---|
@@ -49,6 +52,8 @@ data/batch_2/    ─────►   /Volumes/asset_mgmt/bronze/uploads/
 | Energy | XOM · CVX · COP · SLB · EOG |
 | Consumer | AMZN · HD · MCD · NKE · COST |
 | Benchmark | SPY |
+
+> SPY is included in the 26 tickers. Total distinct securities = 26.
 
 ---
 
@@ -60,6 +65,7 @@ data/batch_2/    ─────►   /Volumes/asset_mgmt/bronze/uploads/
 │   ├── batch_2/                 ← month 22   (gitignored, share via OneDrive)
 │   └── frozen_live_snapshot/    ← captured at submission (gitignored)
 ├── notebooks/
+│   ├── 00_setup.ipynb           ← run once: creates catalog, schemas, volumes
 │   ├── 00_live_pull.ipynb       ← daily yfinance pull (scheduled 22:30 CET)
 │   ├── 01_bronze_ingest.ipynb   ← uploads → bronze/prices
 │   ├── 02_silver_build.ipynb    ← bronze → silver.daily_prices (Delta)
@@ -104,81 +110,104 @@ Batch_2 → data/batch_2/ohlcv_batch_2.parquet
 
 ---
 
-## Databricks Setup
+## Databricks Setup — Grader Reproduction Steps
 
-### 1. Create catalog, schemas, and volumes
+Follow these steps in order to reproduce the full pipeline from scratch.
 
-Run in a SQL notebook:
+### Step 1 — Import all notebooks
 
-```sql
-CREATE CATALOG IF NOT EXISTS asset_mgmt;
-USE CATALOG asset_mgmt;
+In Databricks: **Workspace → Import** → import each `.ipynb` from the `notebooks/` folder.
 
-CREATE SCHEMA IF NOT EXISTS bronze;
-CREATE SCHEMA IF NOT EXISTS silver;
-CREATE SCHEMA IF NOT EXISTS gold;
+### Step 2 — Run `00_setup.ipynb`
 
-CREATE VOLUME IF NOT EXISTS asset_mgmt.bronze.uploads;
-CREATE VOLUME IF NOT EXISTS asset_mgmt.bronze.prices;
+Attach to a Serverless cluster and run all cells. This creates:
+- Catalog `asset_mgmt`
+- Schemas `bronze`, `silver`, `gold`
+- Volumes `bronze.uploads`, `bronze.prices`
+
+Safe to re-run — all statements use `IF NOT EXISTS`.
+
+### Step 3 — Iteration 1: seed data
+
+1. Go to **Catalog → asset_mgmt → bronze → volumes → uploads → Upload to this volume**
+2. Upload `data/seed/ohlcv_seed.parquet` from the OneDrive submission folder
+3. Open `01_bronze_ingest`, set widget `source_type = seed`, run all
+4. Run `02_silver_build` (run all)
+5. Run `03_gold_build` (run all)
+
+Expected after Step 3:
+- `bronze/prices/` contains ~27,000 rows tagged `_source_type = seed`
+- `silver.daily_prices` contains the same rows, cleaned and enriched
+- `gold.dashboard_latest_prices` has 26 rows (one per ticker)
+- `gold.ticker_performance` has ~27,000 rows with rolling analytics
+
+### Step 4 — Iteration 2: batch_2 data
+
+1. Delete `ohlcv_seed.parquet` from the uploads volume
+2. Upload `data/batch_2/ohlcv_batch_2.parquet`
+3. Open `01_bronze_ingest`, set widget `source_type = batch_2`, run all
+4. Re-run `02_silver_build`
+5. Re-run `03_gold_build`
+
+Expected after Step 4:
+- `bronze/prices/` now has two `ingest_date` partitions (seed + batch_2)
+- Silver MERGE INTO adds the new rows without duplicating existing ones
+- Gold tables updated to reflect the latest prices
+
+### Step 5 — Iteration 3: frozen live snapshot (optional)
+
+If the submission includes a frozen live snapshot:
+1. Upload all files from `data/frozen_live_snapshot/` to the uploads volume
+2. Run `01_bronze_ingest` with `source_type = live`
+3. Re-run `02_silver_build` and `03_gold_build`
+
+### Step 6 — Set up Genie Space
+
+1. In the left sidebar go to **Genie → New Genie Space**
+2. Name it `Asset Management Analytics`
+3. Add tables: `asset_mgmt.gold.dashboard_latest_prices` and `asset_mgmt.gold.ticker_performance`
+4. Paste the following into the **Instructions** box:
+
+```
+This space answers questions about a portfolio of 26 S&P 500 stocks
+across 5 sectors (Tech, Finance, Healthcare, Energy, Consumer) plus
+the SPY benchmark ETF.
+
+Data covers approximately 22 months of daily OHLCV prices.
+
+SPY is included in the 26 tickers and is classified under the
+"Benchmark" sector. Total distinct securities = 26, including SPY.
+
+Key tables:
+- dashboard_latest_prices: one row per ticker, most recent trading day only.
+  Use this for current price, latest return, and best performer questions.
+- ticker_performance: one row per ticker per date, full history.
+  Use this for time-series, ranking over periods, rolling averages,
+  and cross-sector comparisons.
+
+Returns are expressed as decimals (0.01 = 1%).
+Multiply by 100 to express as percentages.
+daily_return is the single-day change.
+cumulative_return is the total return since the first date in the dataset.
+rolling_30d_volatility is the 30-day rolling standard deviation of daily_return (daily, not annualised).
 ```
 
-### 2. Upload data files
+### Step 7 — Schedule the live pull (optional)
 
-**Catalog → asset_mgmt → bronze → volumes → uploads → Upload to this volume**
+**Workflows → Create job** → Notebook task → select `00_live_pull` → Serverless cluster
+→ Schedule: cron `30 22 * * *` → timezone `Europe/Paris`
 
-Upload one file at a time, deleting the previous one before each run:
-1. `data/seed/ohlcv_seed.parquet`
-2. `data/batch_2/ohlcv_batch_2.parquet`
-
-### 3. Import notebooks
-
-**Workspace → Import** → select each `.ipynb` file from the `notebooks/` folder.
+After each nightly run, `01_bronze_ingest` (source_type=live), `02_silver_build`, and `03_gold_build` should be re-run to propagate the new data through the pipeline.
 
 ---
 
-## Running the Pipeline
+## Pipeline Conventions
 
-Run notebooks in order. Each is idempotent — safe to re-run.
-
-### Bronze — `01_bronze_ingest.ipynb`
-
-Run once per data file. Set the `source_type` widget before each run:
-
-| Run | Widget: `source_type` | File in uploads |
-|---|---|---|
-| 1 | `seed` | `ohlcv_seed.parquet` |
-| 2 | `batch_2` | `ohlcv_batch_2.parquet` |
-| 3+ | `live` | `live_YYYY-MM-DD.parquet` (auto-generated) |
-
-### Live pull — `00_live_pull.ipynb`
-
-Runs automatically via Databricks Jobs at **22:30 CET / Europe/Paris** every day.
-No-op on weekends and market holidays (clean exit, no error).
-
-To set up the job: **Workflows → Create job** → Notebook task → cron `30 22 * * *` → timezone `Europe/Paris`.
-
-After the job fires, run `01_bronze_ingest` with `source_type=live` to push it into Bronze.
-
-### Silver — `02_silver_build.ipynb`
-
-Reads all Bronze data, applies cleaning and enrichment, merges into `silver.daily_prices`.
-
-Run after every Bronze ingest. MERGE INTO ensures no duplicates.
-
-### Gold — `03_gold_build.ipynb`
-
-Builds `gold.dashboard_latest_prices` and `gold.ticker_performance` from Silver.
-
-Run after Silver. All columns have COMMENT strings for Genie compatibility.
-
----
-
-## Databricks Conventions
-
-- Catalog: `asset_mgmt`
-- Schemas: `bronze` · `silver` · `gold`
+- Catalog: `asset_mgmt` · Schemas: `bronze` · `silver` · `gold`
+- Bronze is append-only Parquet, partitioned by `ingest_date`
 - All Silver/Gold updates use `MERGE INTO` — never full overwrites
-- Every Gold column has a `COMMENT` string for Genie
+- Every Gold column has a `COMMENT` string for Genie compatibility
+- `00_live_pull` exits cleanly on weekends and market holidays (no error)
 
 ---
 
