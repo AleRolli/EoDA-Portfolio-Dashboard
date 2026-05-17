@@ -62,8 +62,7 @@ data/batch_2/    ─────►   /Volumes/asset_mgmt/bronze/uploads/
 ```
 ├── data/
 │   ├── seed/                    ← months 1-21 (gitignored, share via OneDrive)
-│   ├── batch_2/                 ← month 22   (gitignored, share via OneDrive)
-│   └── frozen_live_snapshot/    ← captured at submission (gitignored)
+│   └── batch_2/                 ← month 22   (gitignored, share via OneDrive)
 ├── notebooks/
 │   ├── 00_setup.ipynb           ← run once: creates catalog, schemas, volumes
 │   ├── 00_live_pull.ipynb       ← daily yfinance pull (scheduled 22:30 CET); flattens MultiIndex columns
