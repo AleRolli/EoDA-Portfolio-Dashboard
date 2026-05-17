@@ -66,10 +66,11 @@ data/batch_2/    ─────►   /Volumes/asset_mgmt/bronze/uploads/
 │   └── frozen_live_snapshot/    ← captured at submission (gitignored)
 ├── notebooks/
 │   ├── 00_setup.ipynb           ← run once: creates catalog, schemas, volumes
-│   ├── 00_live_pull.ipynb       ← daily yfinance pull (scheduled 22:30 CET)
+│   ├── 00_live_pull.ipynb       ← daily yfinance pull (scheduled 22:30 CET); flattens MultiIndex columns
 │   ├── 01_bronze_ingest.ipynb   ← uploads → bronze/prices
 │   ├── 02_silver_build.ipynb    ← bronze → silver.daily_prices (Delta)
-│   └── 03_gold_build.ipynb      ← silver → gold tables (Delta)
+│   ├── 03_gold_build.ipynb      ← silver → gold tables (Delta)
+│   └── 99_recovery.ipynb        ← one-time recovery for the May 11–15 live-pull incident
 ├── scripts/
 │   └── prepare_data.py          ← local script: pull 22 months, split seed/batch_2
 ├── report/
@@ -208,6 +209,19 @@ After each nightly run, `01_bronze_ingest` (source_type=live), `02_silver_build`
 - All Silver/Gold updates use `MERGE INTO` — never full overwrites
 - Every Gold column has a `COMMENT` string for Genie compatibility
 - `00_live_pull` exits cleanly on weekends and market holidays (no error)
+
+---
+
+## Known Issues and Recovery
+
+An early version of `00_live_pull` called `yfinance.download(...)` without flattening the MultiIndex columns the library returns when given a single ticker. The subsequent `spark.createDataFrame(...)` silently produced null OHLCV for every ticker except AAPL (AAPL had already been ingested through a different path). Five `live_*.parquet` files for 2026-05-11 → 2026-05-15 landed in Bronze with null Close values, corrupting Silver and Gold for that window.
+
+The fix is in two places:
+
+- `00_live_pull.ipynb` now flattens MultiIndex columns before selecting OHLCV, so future scheduled runs are correct.
+- `notebooks/99_recovery.ipynb` is a one-time, seven-phase recovery notebook that diagnoses the corruption, deletes the broken upload files and Bronze partitions, re-pulls the affected window with the fix in place, writes one clean Parquet file to a dedicated `bronze/backfill/` volume (created idempotently by the notebook itself, so no change is needed in `00_setup`), re-runs Bronze ingest pointed at that folder, deletes the affected rows from the Delta Silver table, rebuilds Silver and Gold, and verifies that all 26 tickers show a non-null close for the latest trading day.
+
+The recovery notebook is included for completeness and reproducibility of the audit trail. The grader does **not** need to run it — the steps in `Databricks Setup` already produce a clean pipeline from scratch.
 
 ---
 
