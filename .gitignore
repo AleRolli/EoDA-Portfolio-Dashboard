@@ -226,12 +226,10 @@ __pycache__/
 # Data files (too large for Git — submit via OneDrive)
 data/seed/*
 data/batch_2/*
-data/frozen_live_snapshot/*
 
 # Keep the folder structure despite ignoring contents
 !data/seed/.gitkeep
 !data/batch_2/.gitkeep
-!data/frozen_live_snapshot/.gitkeep
 
 # OS junk
 .DS_Store
