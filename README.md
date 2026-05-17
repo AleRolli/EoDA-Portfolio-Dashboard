@@ -111,7 +111,7 @@ Batch_2 → data/batch_2/ohlcv_batch_2.parquet
 
 ---
 
-## Databricks Setup — Grader Reproduction Steps
+## Databricks Setup — Reproduction Steps
 
 Follow these steps in order to reproduce the full pipeline from scratch.
 
@@ -155,14 +155,7 @@ Expected after Step 4:
 - Silver MERGE INTO adds the new rows without duplicating existing ones
 - Gold tables updated to reflect the latest prices
 
-### Step 5 — Iteration 3: frozen live snapshot (optional)
-
-If the submission includes a frozen live snapshot:
-1. Upload all files from `data/frozen_live_snapshot/` to the uploads volume
-2. Run `01_bronze_ingest` with `source_type = live`
-3. Re-run `02_silver_build` and `03_gold_build`
-
-### Step 6 — Set up Genie Space
+### Step 5 — Set up Genie Space
 
 1. In the left sidebar go to **Genie → New Genie Space**
 2. Name it `Asset Management Analytics`
@@ -170,30 +163,28 @@ If the submission includes a frozen live snapshot:
 4. Paste the following into the **Instructions** box:
 
 ```
-This space answers questions about a portfolio of 26 S&P 500 stocks
-across 5 sectors (Tech, Finance, Healthcare, Energy, Consumer) plus
+This space answers questions about a portfolio of 26 S&P 500 stocks 
+across 5 sectors (Tech, Finance, Healthcare, Energy, Consumer) plus 
 the SPY benchmark ETF.
 
 Data covers approximately 22 months of daily OHLCV prices.
 
-SPY is included in the 26 tickers and is classified under the
-"Benchmark" sector. Total distinct securities = 26, including SPY.
-
 Key tables:
 - dashboard_latest_prices: one row per ticker, most recent trading day only.
-  Use this for current price, latest return, and best performer questions.
+  Use this for "current price", "latest return", "best performer today" questions.
 - ticker_performance: one row per ticker per date, full history.
-  Use this for time-series, ranking over periods, rolling averages,
+  Use this for time-series, ranking over periods, rolling averages, 
   and cross-sector comparisons.
 
-Returns are expressed as decimals (0.01 = 1%).
+Returns are expressed as decimals (0.01 = 1%). 
 Multiply by 100 to express as percentages.
-daily_return is the single-day change.
-cumulative_return is the total return since the first date in the dataset.
-rolling_30d_volatility is the 30-day rolling standard deviation of daily_return (daily, not annualised).
+
+SPY is included in the 26 tickers and is classified under the 
+"Benchmark" sector. It is not separate from the ticker universe — 
+the total number of distinct securities is 26, including SPY.
 ```
 
-### Step 7 — Schedule the live pull (optional)
+### Step 6 — Schedule the live pull (optional)
 
 **Workflows → Create job** → Notebook task → select `00_live_pull` → Serverless cluster
 → Schedule: cron `30 22 * * *` → timezone `Europe/Paris`
@@ -222,9 +213,3 @@ The fix is in two places:
 - `notebooks/99_recovery.ipynb` is a one-time, seven-phase recovery notebook that diagnoses the corruption, deletes the broken upload files and Bronze partitions, re-pulls the affected window with the fix in place, writes one clean Parquet file to a dedicated `bronze/backfill/` volume (created idempotently by the notebook itself, so no change is needed in `00_setup`), re-runs Bronze ingest pointed at that folder, deletes the affected rows from the Delta Silver table, rebuilds Silver and Gold, and verifies that all 26 tickers show a non-null close for the latest trading day.
 
 The recovery notebook is included for completeness and reproducibility of the audit trail. The grader does **not** need to run it — the steps in `Databricks Setup` already produce a clean pipeline from scratch.
-
----
-
-## Deadline
-
-**16 May 2026, 23:59 Lisbon time**
